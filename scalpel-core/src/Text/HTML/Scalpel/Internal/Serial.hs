@@ -25,7 +25,6 @@ import Control.Monad.Cont (MonadCont)
 import Control.Monad.Except (MonadError)
 import Control.Monad.Reader
 import Control.Monad.State
-import Control.Monad.Trans
 import Control.Monad.Trans.Maybe
 import Control.Monad.Writer (MonadWriter)
 import Data.Bifunctor

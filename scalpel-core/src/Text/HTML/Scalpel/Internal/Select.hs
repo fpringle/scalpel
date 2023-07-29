@@ -11,7 +11,7 @@ module Text.HTML.Scalpel.Internal.Select
   )
 where
 
-import Control.Applicative ((<$>), (<|>))
+import Control.Applicative ((<|>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust)
 import qualified Data.Text as T
