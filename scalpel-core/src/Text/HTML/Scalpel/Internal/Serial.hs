@@ -162,7 +162,7 @@ inSerial (MkSerialScraper serialScraper) = do
     scraper' pos spec = liftError pos $ scraper spec
 
 liftError :: Functor m => Maybe Int -> ExceptT T.Text m a -> ExceptT ScrapeError m a
-liftError pos = withExceptT (`SingleError` pos)
+liftError pos = withExceptT (`singleError` pos)
 
 dropError :: Functor m => ExceptT ScrapeError m a -> ExceptT T.Text m a
 dropError = withExceptT renderScraperErrorCompact

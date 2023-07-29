@@ -32,6 +32,7 @@ library
       ,   FunctionalDependencies
   other-modules:
           Text.HTML.Scalpel.Internal.Scrape
+      ,   Text.HTML.Scalpel.Internal.Scrape.Error
       ,   Text.HTML.Scalpel.Internal.Scrape.StringLike
       ,   Text.HTML.Scalpel.Internal.Select
       ,   Text.HTML.Scalpel.Internal.Select.Combinators

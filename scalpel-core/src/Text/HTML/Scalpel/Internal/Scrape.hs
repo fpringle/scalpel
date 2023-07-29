@@ -1,22 +1,16 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_HADDOCK hide #-}
 
 module Text.HTML.Scalpel.Internal.Scrape
   ( Scraper
   , ScraperT (..)
-  , ScrapeError (..)
-  , mkError
-  , renderScraperErrorCompact
-  , renderScraperErrorPretty
+  , module Error
   , scrape
   , scrapeT
   , attr
@@ -35,7 +29,6 @@ module Text.HTML.Scalpel.Internal.Scrape
 where
 
 import Control.Applicative
-import Control.Exception
 import Control.Monad
 import Control.Monad.Cont (MonadCont)
 import Control.Monad.Except
@@ -48,71 +41,9 @@ import qualified Data.Text as T
 import qualified Data.Vector as Vector
 import Text.HTML.Scalpel.Internal.Select
 import Text.HTML.Scalpel.Internal.Select.Types
+import Text.HTML.Scalpel.Internal.Scrape.Error as Error
 import qualified Text.HTML.TagSoup as TagSoup
 import qualified Text.StringLike as TagSoup
-import GHC.Generics (Generic)
-import Control.DeepSeq (NFData)
-
-data ScrapeError where
-  SingleError :: T.Text -> Maybe Int -> ScrapeError
-  MultiErrors :: [ScrapeError] -> ScrapeError
-
-deriving instance Generic ScrapeError
-
-deriving instance Show ScrapeError
-
-instance NFData ScrapeError
-
-mkError :: T.Text -> ScrapeError
-mkError = flip SingleError Nothing
-
-renderScraperErrorCompact :: ScrapeError -> T.Text
-renderScraperErrorCompact = \case
-  SingleError msg mbPos -> renderSingleError msg mbPos
-  MultiErrors errs -> "[" <> T.intercalate ", " (renderScraperErrorCompact <$> errs) <> "]"
-
-renderSingleError :: T.Text -> Maybe Int -> T.Text
-renderSingleError msg Nothing = msg
-renderSingleError msg (Just pos) = msg <> " (position " <> T.pack (show pos) <> ")"
-
-{-
-MultiErrors [SingleError "e1" (Just 0), MultiErrors [MultiErrors [], SingleError "e2" Nothing]]
-=>
-[ e1 (position 0)
-, [ []
-  , e1
-  ]
-]
--}
-renderScraperErrorPretty :: ScrapeError -> T.Text
-renderScraperErrorPretty = render 0
-  where
-    render :: Int -> ScrapeError -> T.Text
-    render indent = \case
-      SingleError msg mbPos -> renderSingleError msg mbPos
-      MultiErrors [] -> "[]"
-      MultiErrors errs ->
-        T.intercalate "\n"
-          . (<> [spaces <> "]"])
-          . fmap (\(start, stuff) -> start <> " " <> stuff)
-          . zip ("[" : repeat (spaces <> ","))
-          $ render (indent + 2)
-            <$> errs
-      where
-        spaces = T.replicate indent " "
-
-instance Exception ScrapeError where
-  displayException = T.unpack . renderScraperErrorCompact
-
-instance Semigroup ScrapeError where
-  MultiErrors e1 <> MultiErrors e2 = MultiErrors $ e1 <> e2
-  e1 <> MultiErrors e2 = MultiErrors $ e1 : e2
-  MultiErrors e1 <> e2 = MultiErrors $ e1 <> [e2]
-  e1 <> e2 = MultiErrors [e1, e2]
-
-instance Monoid ScrapeError where
-  mempty = MultiErrors []
-  mappend = (<>)
 
 -- | A 'ScraperT' operates like 'Scraper' but also acts as a monad transformer.
 newtype ScraperT str m a = MkScraper
@@ -135,7 +66,7 @@ newtype ScraperT str m a = MkScraper
 instance (Monad m, TagSoup.StringLike str) => MonadError T.Text (ScraperT str m) where
   throwError errMsg = do
     pos <- position
-    let err = SingleError errMsg (Just pos)
+    let err = singleError errMsg (Just pos)
     MkScraper $ throwError err
   catchError (MkScraper ma) handler = MkScraper $ catchError ma (unScraperT . handler . renderScraperErrorCompact)
 
@@ -194,7 +125,7 @@ chroot selector inner = do
   results <- chrootsKeepEithers selector inner
   let (fails, successes) = partitionEithers results
   case successes of
-    [] -> throwError' $ MultiErrors fails
+    [] -> throwError' $ multiErrors fails
     a : _ -> pure a
 
 {- | The 'chroots' function takes a selector and an inner scraper and executes
