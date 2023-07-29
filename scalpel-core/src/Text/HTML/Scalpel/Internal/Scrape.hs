@@ -1,13 +1,21 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_HADDOCK hide #-}
 
 module Text.HTML.Scalpel.Internal.Scrape
   ( Scraper
   , ScraperT (..)
+  , ScrapeError (..)
+  , mkError
+  , renderScraperErrorCompact
+  , renderScraperErrorPretty
   , scrape
   , scrapeT
   , attr
@@ -26,23 +34,83 @@ module Text.HTML.Scalpel.Internal.Scrape
 where
 
 import Control.Applicative
+import Control.Exception
 import Control.Monad
 import Control.Monad.Cont (MonadCont)
-import Control.Monad.Except (MonadError)
+import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State (MonadState)
-import Control.Monad.Trans.Maybe
 import Control.Monad.Writer (MonadWriter)
+import Data.Either
 import Data.Functor.Identity
-import Data.Maybe
+import qualified Data.Text as T
 import qualified Data.Vector as Vector
 import Text.HTML.Scalpel.Internal.Select
 import Text.HTML.Scalpel.Internal.Select.Types
 import qualified Text.HTML.TagSoup as TagSoup
 import qualified Text.StringLike as TagSoup
 
+data ScrapeError where
+  SingleError :: T.Text -> Maybe Int -> ScrapeError
+  MultiErrors :: [ScrapeError] -> ScrapeError
+
+deriving instance Show ScrapeError
+
+mkError :: T.Text -> ScrapeError
+mkError = flip SingleError Nothing
+
+renderScraperErrorCompact :: ScrapeError -> T.Text
+renderScraperErrorCompact = \case
+  SingleError msg mbPos -> renderSingleError msg mbPos
+  MultiErrors errs -> "[" <> T.intercalate ", " (renderScraperErrorCompact <$> errs) <> "]"
+
+renderSingleError :: T.Text -> Maybe Int -> T.Text
+renderSingleError msg Nothing = msg
+renderSingleError msg (Just pos) = msg <> " (position " <> T.pack (show pos) <> ")"
+
+{-
+MultiErrors [SingleError "e1" (Just 0), MultiErrors [MultiErrors [], SingleError "e2" Nothing]]
+=>
+[ e1 (position 0)
+, [ []
+  , e1
+  ]
+]
+-}
+renderScraperErrorPretty :: ScrapeError -> T.Text
+renderScraperErrorPretty = render 0
+  where
+    render :: Int -> ScrapeError -> T.Text
+    render indent = \case
+      SingleError msg mbPos -> renderSingleError msg mbPos
+      MultiErrors [] -> "[]"
+      MultiErrors errs ->
+        T.intercalate "\n"
+          . (<> [spaces <> "]"])
+          . fmap (\(start, stuff) -> start <> " " <> stuff)
+          . zip ("[" : repeat (spaces <> ","))
+          $ render (indent + 2)
+            <$> errs
+      where
+        spaces = T.replicate indent " "
+
+instance Exception ScrapeError where
+  displayException = T.unpack . renderScraperErrorCompact
+
+instance Semigroup ScrapeError where
+  MultiErrors e1 <> MultiErrors e2 = MultiErrors $ e1 <> e2
+  e1 <> MultiErrors e2 = MultiErrors $ e1 : e2
+  MultiErrors e1 <> e2 = MultiErrors $ e1 <> [e2]
+  e1 <> e2 = MultiErrors [e1, e2]
+
+instance Monoid ScrapeError where
+  mempty = MultiErrors []
+  mappend = (<>)
+
 -- | A 'ScraperT' operates like 'Scraper' but also acts as a monad transformer.
-newtype ScraperT str m a = MkScraper (ReaderT (TagSpec str) (MaybeT m) a)
+newtype ScraperT str m a = MkScraper
+  { unScraperT :: ReaderT (TagSpec str) (ExceptT ScrapeError m) a
+  }
   deriving
     ( Functor
     , Applicative
@@ -52,11 +120,20 @@ newtype ScraperT str m a = MkScraper (ReaderT (TagSpec str) (MaybeT m) a)
     , MonadFix
     , MonadIO
     , MonadCont
-    , MonadError e
     , MonadState s
     , MonadWriter w
     , MonadFail
     )
+
+instance (Monad m, TagSoup.StringLike str) => MonadError T.Text (ScraperT str m) where
+  throwError errMsg = do
+    pos <- position
+    let err = SingleError errMsg (Just pos)
+    MkScraper $ throwError err
+  catchError (MkScraper ma) handler = MkScraper $ catchError ma (unScraperT . handler . renderScraperErrorCompact)
+
+throwError' :: Monad m => ScrapeError -> ScraperT str m a
+throwError' err = MkScraper $ throwError err
 
 instance MonadTrans (ScraperT str) where
   lift = MkScraper . lift . lift
@@ -70,8 +147,8 @@ instance MonadReader s m => MonadReader s (ScraperT str m) where
 -}
 type Scraper str = ScraperT str Identity
 
-scrapeTagSpec :: ScraperT str m a -> TagSpec str -> m (Maybe a)
-scrapeTagSpec (MkScraper r) = runMaybeT . runReaderT r
+scrapeTagSpec :: ScraperT str m a -> TagSpec str -> m (Either ScrapeError a)
+scrapeTagSpec (MkScraper r) = runExceptT . runReaderT r
 
 {- | The 'scrapeT' function executes a 'ScraperT' on a list of 'TagSoup.Tag's
  and produces an optional value. Since 'ScraperT' is a monad transformer, the
@@ -81,7 +158,7 @@ scrapeT ::
   (TagSoup.StringLike str) =>
   ScraperT str m a ->
   [TagSoup.Tag str] ->
-  m (Maybe a)
+  m (Either ScrapeError a)
 scrapeT s = scrapeTagSpec s . tagsToSpec . TagSoup.canonicalizeTags
 
 {- | The 'scrape' function executes a 'Scraper' on a list of 'TagSoup.Tag's and
@@ -91,7 +168,7 @@ scrape ::
   (TagSoup.StringLike str) =>
   Scraper str a ->
   [TagSoup.Tag str] ->
-  Maybe a
+  Either ScrapeError a
 scrape = fmap runIdentity . scrapeT
 
 {- | The 'chroot' function takes a selector and an inner scraper and executes
@@ -107,9 +184,11 @@ chroot ::
   ScraperT str m a ->
   ScraperT str m a
 chroot selector inner = do
-  maybeResult <- listToMaybe <$> chroots selector inner
-  guard (isJust maybeResult)
-  return $ fromJust maybeResult
+  results <- chrootsKeepEithers selector inner
+  let (fails, successes) = partitionEithers results
+  case successes of
+    [] -> throwError' $ MultiErrors fails
+    a : _ -> pure a
 
 {- | The 'chroots' function takes a selector and an inner scraper and executes
  the inner scraper as if it were scraping a document that consists solely of
@@ -124,10 +203,17 @@ chroots ::
   Selector ->
   ScraperT str m a ->
   ScraperT str m [a]
-chroots selector (MkScraper (ReaderT inner)) =
-  MkScraper $ ReaderT $ \tags -> MaybeT $ do
-    mvalues <- forM (select selector tags) (runMaybeT . inner)
-    return $ Just $ catMaybes mvalues
+chroots selector inner = rights <$> chrootsKeepEithers selector inner
+
+chrootsKeepEithers ::
+  (TagSoup.StringLike str, Monad m) =>
+  Selector ->
+  ScraperT str m a ->
+  ScraperT str m [Either ScrapeError a]
+chrootsKeepEithers selector (MkScraper (ReaderT inner)) =
+  MkScraper $ ReaderT $ \tags -> ExceptT $ do
+    mvalues <- forM (select selector tags) (runExceptT . inner)
+    return $ Right mvalues
 
 {- | The 'matches' function takes a selector and returns `()` if the selector
  matches any node in the DOM.
@@ -217,10 +303,11 @@ attr ::
 attr name s =
   MkScraper $
     ReaderT $
-      MaybeT
+      ExceptT
         . return
-        . listToMaybe
-        . mapMaybe (tagsToAttr $ TagSoup.castString name)
+        . maybe (Left (mkError "empty list")) pure
+        . headMay
+        . mapEither (tagsToAttr $ TagSoup.castString name)
         . select s
 
 {- | The 'attrs' function takes an attribute name and a selector and returns the
@@ -238,13 +325,20 @@ attrs ::
 attrs name s =
   MkScraper $
     ReaderT $
-      MaybeT
+      ExceptT
         . return
-        . Just
-        . mapMaybe (tagsToAttr nameStr)
+        . Right
+        . mapEither (tagsToAttr nameStr)
         . select s
   where
     nameStr = TagSoup.castString name
+
+mapEither :: (a -> Either e b) -> [a] -> [b]
+mapEither f = rights . fmap f
+
+headMay :: [a] -> Maybe a
+headMay [] = Nothing
+headMay (x : _) = Just x
 
 {- | The 'position' function is intended to be used within the do-block of a
  `chroots` call. Within the do-block position will return the index of the
@@ -284,11 +378,11 @@ attrs name s =
 position :: (TagSoup.StringLike str, Monad m) => ScraperT str m Int
 position = MkScraper $ reader tagsToPosition
 
-withHead :: Monad m => (a -> b) -> [a] -> ReaderT (TagSpec str) (MaybeT m) b
+withHead :: Monad m => (a -> b) -> [a] -> ReaderT (TagSpec str) (ExceptT ScrapeError m) b
 withHead _ [] = empty
 withHead f (x : _) = return $ f x
 
-withAll :: Monad m => (a -> b) -> [a] -> ReaderT (TagSpec str) (MaybeT m) [b]
+withAll :: Monad m => (a -> b) -> [a] -> ReaderT (TagSpec str) (ExceptT ScrapeError m) [b]
 withAll f xs = return $ map f xs
 
 foldSpec ::
@@ -318,12 +412,16 @@ tagsToAttr ::
   (Show str, TagSoup.StringLike str) =>
   str ->
   TagSpec str ->
-  Maybe str
+  Either ScrapeError str
 tagsToAttr tagName (tags, _, _) = do
-  guard $ 0 < Vector.length tags
+  guardEither (mkError "no tags") $ 0 < Vector.length tags
   let tag = infoTag $ tags Vector.! 0
-  guard $ TagSoup.isTagOpen tag
+  guardEither (mkError "expected open tag") $ TagSoup.isTagOpen tag
   return $ TagSoup.fromAttrib tagName tag
+
+guardEither :: MonadError e m => e -> Bool -> m ()
+guardEither _ True = pure ()
+guardEither e _ = throwError e
 
 tagsToPosition :: TagSpec str -> Int
 tagsToPosition (_, _, ctx) = ctxPosition ctx

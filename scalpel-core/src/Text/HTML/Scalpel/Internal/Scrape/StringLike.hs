@@ -18,7 +18,7 @@ scrapeStringLike ::
   (TagSoup.StringLike str) =>
   str ->
   Scraper str a ->
-  Maybe a
+  Either ScrapeError a
 scrapeStringLike = fmap runIdentity . scrapeStringLikeT
 
 {- | The 'scrapeStringLikeT' function parses a 'StringLike' value into a list of
@@ -29,7 +29,7 @@ scrapeStringLikeT ::
   (TagSoup.StringLike str, Monad m) =>
   str ->
   ScraperT str m a ->
-  m (Maybe a)
+  m (Either ScrapeError a)
 scrapeStringLikeT tags scraper =
   scrapeT
     scraper

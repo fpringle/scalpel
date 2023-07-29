@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_HADDOCK hide #-}
@@ -22,16 +23,16 @@ where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Cont (MonadCont)
-import Control.Monad.Except (MonadError)
+import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
-import Control.Monad.Trans.Maybe
 import Control.Monad.Writer (MonadWriter)
 import Data.Bifunctor
 import Data.Functor.Identity
 import Data.List.PointedList (PointedList)
 import qualified Data.List.PointedList as PointedList
 import Data.Maybe
+import qualified Data.Text as T
 import qualified Data.Tree as Tree
 import Text.HTML.Scalpel.Internal.Scrape
 import Text.HTML.Scalpel.Internal.Select
@@ -111,7 +112,7 @@ type SerialScraper str a = SerialScraperT str Identity a
 
 -- | Run a serial scraper transforming over a monad 'm'.
 newtype SerialScraperT str m a
-  = MkSerialScraper (StateT (SpecZipper str) (MaybeT m) a)
+  = MkSerialScraper (StateT (SpecZipper str) (ExceptT T.Text m) a)
   deriving
     ( Functor
     , Applicative
@@ -122,7 +123,7 @@ newtype SerialScraperT str m a
     , MonadFail
     , MonadIO
     , MonadCont
-    , MonadError e
+    , MonadError T.Text
     , MonadReader r
     , MonadWriter w
     )
@@ -141,7 +142,9 @@ inSerial ::
   (TagSoup.StringLike str, Monad m) =>
   SerialScraperT str m a ->
   ScraperT str m a
-inSerial (MkSerialScraper serialScraper) = MkScraper $ ReaderT scraper
+inSerial (MkSerialScraper serialScraper) = do
+  pos <- position
+  MkScraper . ReaderT $ scraper' (Just pos)
   where
     scraper spec@(vec, root : _, ctx)
       | ctxInChroot ctx =
@@ -155,6 +158,14 @@ inSerial (MkSerialScraper serialScraper) = MkScraper $ ReaderT scraper
     -- that just contains each root node in the forest.
     toZipper (vector, forest, context) =
       zipperFromList $ map ((vector,,context) . return) forest
+
+    scraper' pos spec = liftError pos $ scraper spec
+
+liftError :: Functor m => Maybe Int -> ExceptT T.Text m a -> ExceptT ScrapeError m a
+liftError pos = withExceptT (`SingleError` pos)
+
+dropError :: Functor m => ExceptT ScrapeError m a -> ExceptT T.Text m a
+dropError = withExceptT renderScraperErrorCompact
 
 {- | Creates a SpecZipper from a list of tag specs. This requires bookending the
  zipper with Nothing values to denote valid focuses that are just off either
@@ -174,9 +185,9 @@ stepWith ::
   SerialScraperT str m b
 stepWith moveList (MkScraper (ReaderT scraper)) = MkSerialScraper . StateT $
   \zipper -> do
-    zipper' <- maybeT $ moveList zipper
-    focus <- maybeT $ PointedList._focus zipper'
-    value <- scraper focus
+    zipper' <- maybeT "couldn't step" $ moveList zipper
+    focus <- maybeT "no focus" $ PointedList._focus zipper'
+    value <- dropError $ scraper focus
     return (value, zipper')
 
 {- | Move the cursor back one node and execute the given scraper on the new
@@ -202,11 +213,11 @@ seekWith ::
 seekWith moveList (MkScraper (ReaderT scraper)) = MkSerialScraper (StateT go)
   where
     go zipper = do
-      zipper' <- maybeT $ moveList zipper
+      zipper' <- maybeT "couldn't step" $ moveList zipper
       runScraper zipper' <|> go zipper'
     runScraper zipper = do
-      focus <- maybeT $ PointedList._focus zipper
-      value <- scraper focus
+      focus <- maybeT "no focus" $ PointedList._focus zipper
+      value <- dropError $ scraper focus
       return (value, zipper)
 
 {- | Move the cursor backward until the given scraper is successfully able to
@@ -238,13 +249,13 @@ untilWith ::
   SerialScraperT str m b
 untilWith moveList appendNode (MkScraper (ReaderT until)) (MkSerialScraper scraper) =
   MkSerialScraper $ do
-    inner <- StateT split
+    inner <- StateT (dropError <$> split)
     lift (evalStateT scraper (appendNode Nothing inner))
   where
     split zipper =
       do
-        zipper' <- maybeT $ moveList zipper
-        spec <- maybeT $ PointedList._focus zipper'
+        zipper' <- maybeT (mkError "couldn't step") $ moveList zipper
+        spec <- maybeT (mkError "no focus") $ PointedList._focus zipper'
         do
           until spec
           return (PointedList.singleton Nothing, zipper)
@@ -276,5 +287,5 @@ untilNext ::
   SerialScraperT str m b
 untilNext = untilWith PointedList.next PointedList.insertLeft
 
-maybeT :: Monad m => Maybe a -> MaybeT m a
-maybeT = MaybeT . return
+maybeT :: MonadError e m => e -> Maybe a -> m a
+maybeT err = maybe (throwError err) pure
