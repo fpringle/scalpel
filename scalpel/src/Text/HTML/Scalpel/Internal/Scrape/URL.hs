@@ -17,7 +17,6 @@ module Text.HTML.Scalpel.Internal.Scrape.URL (
 
 import Text.HTML.Scalpel.Core
 
-import Control.Monad
 import Data.CaseInsensitive ()
 import Data.Default (def)
 import Data.Maybe (listToMaybe)
@@ -58,15 +57,15 @@ instance TagSoup.StringLike str => Default.Default (Config str) where
 -- http-client-tls (via 'HTTP.getGlobalManager'). Any exceptions thrown by
 -- http-client are not caught and are bubbled up to the caller.
 scrapeURL :: (TagSoup.StringLike str)
-          => URL -> Scraper str a -> IO (Maybe a)
+          => URL -> Scraper str a -> IO (Either ScrapeError a)
 scrapeURL = scrapeURLWithConfig def
 
 -- | The 'scrapeURLWithConfig' function takes a 'Config' record type and
 -- downloads the contents of the given URL and executes a 'Scraper' on it.
 scrapeURLWithConfig :: (TagSoup.StringLike str)
-                  => Config str -> URL -> Scraper str a -> IO (Maybe a)
+                  => Config str -> URL -> Scraper str a -> IO (Either ScrapeError a)
 scrapeURLWithConfig config url scraper = do
-    scrape scraper `liftM` fetchTagsWithConfig config url
+    scrape scraper <$> fetchTagsWithConfig config url
 
 -- | Download and parse the contents of the given URL.
 fetchTags :: TagSoup.StringLike str
@@ -79,7 +78,7 @@ fetchTagsWithConfig :: TagSoup.StringLike str
 fetchTagsWithConfig config url = do
     manager <- maybe HTTP.getGlobalManager return (manager config)
     response <- flip HTTP.httpLbs manager =<< HTTP.parseRequest url
-    return $ TagSoup.parseTags $ decoder config $ response
+    return . TagSoup.parseTags . decoder config $ response
 
 -- | The default response decoder. This decoder attempts to infer the character
 -- set of the HTTP response body from the `Content-Type` header. If this header
