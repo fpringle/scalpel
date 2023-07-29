@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Applicative ((<$>))
 import Control.Monad (replicateM_)
 import Criterion.Main (bench, bgroup, defaultMain, nf)
 import Data.Foldable (foldr')
@@ -43,18 +42,18 @@ makeNested i =
     close = T.pack "</tag>"
     one = T.pack "1"
 
-sumListTags :: [TagSoup.Tag T.Text] -> Maybe Integer
+sumListTags :: [TagSoup.Tag T.Text] -> Either ScrapeError Integer
 sumListTags testData =
   flip scrape testData $
     sum <$> chroots "tag" (return 1)
 
-manySelects :: Int -> [TagSoup.Tag T.Text] -> Maybe ()
+manySelects :: Int -> [TagSoup.Tag T.Text] -> Either ScrapeError ()
 manySelects i testData =
   flip scrape testData $
     replicateM_ i $
-      sum <$> chroots "tag" (return 1)
+      sum <$> chroots "tag" (return (1 :: Int))
 
-manySelectNodes :: Int -> [TagSoup.Tag T.Text] -> Maybe T.Text
+manySelectNodes :: Int -> [TagSoup.Tag T.Text] -> Either ScrapeError T.Text
 manySelectNodes i testData =
   flip scrape testData $
     text $

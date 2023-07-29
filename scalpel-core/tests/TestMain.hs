@@ -261,7 +261,7 @@ scrapeTests =
           "<div id=\"outer\"><div id=\"inner\">inner text</div></div>"
           (Just ["inner"])
           (attrs "id" ("div" // "div"))
-      , scrapeTest
+      , scrapeTestIO
           "div // div should match div/div/div twice"
           "<div id=\"a\"><div id=\"b\"><div id=\"c\"></div></div></div>"
           (Just ["b", "c"])
@@ -271,14 +271,14 @@ scrapeTests =
           "<a>1<b>2<c>3</c>4</b>5</a>"
           (Just "12345")
           (text anySelector)
-      , scrapeTest
+      , scrapeTestIO
           "failing a pattern match should stop a scraper"
           "<a>1</a>"
           Nothing
           $ do
             "Bad pattern" <- text "a"
             return "OK"
-      , scrapeTest
+      , scrapeTestIO
           "passing a pattern match should not stop a scraper"
           "<a>1</a>"
           (Just "OK")
@@ -457,7 +457,7 @@ scrapeTests =
                 stepNext (text $ textSelector `atDepth` 0)
                   <|> stepNext (attr "foo" $ "a" `atDepth` 0)
           )
-      , scrapeTest
+      , scrapeTestIO
           "MonadFail sanity check for SerialScraper (passing check)"
           "1"
           (Just "OK")
@@ -465,7 +465,7 @@ scrapeTests =
               "1" <- stepNext $ text textSelector
               return "OK"
           )
-      , scrapeTest
+      , scrapeTestIO
           "MonadFail sanity check for SerialScraper (failing check)"
           "1"
           Nothing
@@ -580,6 +580,18 @@ scrapeTests =
           )
       ]
 
+scrapeTestIO ::
+  (Eq a, Show a) =>
+  String ->
+  String ->
+  Maybe a ->
+  ScraperT String IO a ->
+  Test
+scrapeTestIO label html expected scraper = label' ~: do
+  actual <- either (const Nothing) Just <$> scrapeT scraper (TagSoup.parseTags html)
+  expected @=? actual
+  where label' = label ++ ": scrape (" ++ html ++ ")"
+
 scrapeTest ::
   (Eq a, Show a) =>
   String ->
@@ -590,4 +602,5 @@ scrapeTest ::
 scrapeTest label html expected scraper = label' ~: expected @=? actual
   where
     label' = label ++ ": scrape (" ++ html ++ ")"
-    actual = scrape scraper (TagSoup.parseTags html)
+    actual = eitherToMaybe $ scrape scraper (TagSoup.parseTags html)
+    eitherToMaybe = either (const Nothing) Just

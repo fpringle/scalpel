@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -49,12 +50,18 @@ import Text.HTML.Scalpel.Internal.Select
 import Text.HTML.Scalpel.Internal.Select.Types
 import qualified Text.HTML.TagSoup as TagSoup
 import qualified Text.StringLike as TagSoup
+import GHC.Generics (Generic)
+import Control.DeepSeq (NFData)
 
 data ScrapeError where
   SingleError :: T.Text -> Maybe Int -> ScrapeError
   MultiErrors :: [ScrapeError] -> ScrapeError
 
+deriving instance Generic ScrapeError
+
 deriving instance Show ScrapeError
+
+instance NFData ScrapeError
 
 mkError :: T.Text -> ScrapeError
 mkError = flip SingleError Nothing

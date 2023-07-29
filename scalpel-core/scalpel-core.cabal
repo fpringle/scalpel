@@ -46,6 +46,7 @@ library
       ,   bytestring
       ,   containers
       ,   data-default
+      ,   deepseq
       ,   fail
       ,   pointedlist
       ,   regex-base

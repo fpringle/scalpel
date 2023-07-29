@@ -39,6 +39,9 @@ module Text.HTML.Scalpel.Core
     -- * Scrapers
   , Scraper
   , ScraperT
+  , ScrapeError (..)
+  , renderScraperErrorCompact
+  , renderScraperErrorPretty
 
     -- ** Primitives
   , attr
