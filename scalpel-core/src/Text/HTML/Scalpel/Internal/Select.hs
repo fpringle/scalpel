@@ -1,5 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
+
 {-# LANGUAGE BangPatterns #-}
 {-# OPTIONS_HADDOCK hide #-}
 module Text.HTML.Scalpel.Internal.Select (

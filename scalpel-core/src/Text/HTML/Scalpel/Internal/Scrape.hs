@@ -1,8 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE CPP #-}
 {-# OPTIONS_HADDOCK hide #-}
@@ -27,7 +25,6 @@ module Text.HTML.Scalpel.Internal.Scrape (
 
 import Text.HTML.Scalpel.Internal.Select
 import Text.HTML.Scalpel.Internal.Select.Types
-
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Except (MonadError)
@@ -36,11 +33,8 @@ import Control.Monad.Reader
 import Control.Monad.State (MonadState)
 import Control.Monad.Trans.Maybe
 import Control.Monad.Writer (MonadWriter)
-import Control.Monad.Fix
 import Data.Functor.Identity
 import Data.Maybe
-
-import qualified Control.Monad.Fail as Fail
 import qualified Data.Vector as Vector
 import qualified Text.HTML.TagSoup as TagSoup
 import qualified Text.StringLike as TagSoup
@@ -49,17 +43,11 @@ import qualified Text.StringLike as TagSoup
 -- | A 'ScraperT' operates like 'Scraper' but also acts as a monad transformer.
 newtype ScraperT str m a = MkScraper (ReaderT (TagSpec str) (MaybeT m) a)
     deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadFix,
-              MonadIO, MonadCont, MonadError e, MonadState s, MonadWriter w)
+              MonadIO, MonadCont, MonadError e, MonadState s, MonadWriter w, MonadFail)
 
-#if MIN_VERSION_base(4,9,0)
-deriving instance Monad m => Fail.MonadFail (ScraperT str m)
-#else
-instance Fail.MonadFail m => Fail.MonadFail (ScraperT str m) where
-  fail = lift . Fail.fail
-#endif
 
 instance MonadTrans (ScraperT str) where
-  lift op = MkScraper . lift . lift $ op
+  lift = MkScraper . lift . lift
 
 instance MonadReader s m => MonadReader s (ScraperT str m) where
   ask = MkScraper (lift . lift $ ask)
@@ -179,8 +167,7 @@ innerHTMLs s = MkScraper $ withAll tagsToInnerHTML =<< reader (select s)
 attr :: (Show str, TagSoup.StringLike str, Monad m)
      => String -> Selector -> ScraperT str m str
 attr name s = MkScraper $ ReaderT $ MaybeT
-              . return . listToMaybe . catMaybes
-              . fmap (tagsToAttr $ TagSoup.castString name) . select s
+              . return . listToMaybe . mapMaybe (tagsToAttr $ TagSoup.castString name) . select s
 
 -- | The 'attrs' function takes an attribute name and a selector and returns the
 -- value of the attribute of the given name for every opening tag
@@ -191,8 +178,7 @@ attr name s = MkScraper $ ReaderT $ MaybeT
 attrs :: (Show str, TagSoup.StringLike str, Monad m)
      => String -> Selector -> ScraperT str m [str]
 attrs name s = MkScraper $ ReaderT $ MaybeT
-               . return . Just . catMaybes
-               . fmap (tagsToAttr nameStr) . select s
+               . return . Just . mapMaybe (tagsToAttr nameStr) . select s
     where nameStr = TagSoup.castString name
 
 -- | The 'position' function is intended to be used within the do-block of a

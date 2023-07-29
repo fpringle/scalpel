@@ -1,6 +1,6 @@
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE MultiWayIf #-}
+
 {-# OPTIONS_HADDOCK hide #-}
 module Text.HTML.Scalpel.Internal.Select.Combinators (
     (//)

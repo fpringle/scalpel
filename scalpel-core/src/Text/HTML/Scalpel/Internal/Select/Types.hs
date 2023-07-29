@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE Rank2Types #-}
+
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# OPTIONS_HADDOCK hide #-}
 
@@ -41,7 +41,7 @@ instance IsString AttributeName where
 
 -- | An 'AttributePredicate' is a method that takes a 'TagSoup.Attribute' and
 -- returns a 'Bool' indicating if the given attribute matches a predicate.
-data AttributePredicate
+newtype AttributePredicate
         = MkAttributePredicate
                 (forall str. TagSoup.StringLike str => [TagSoup.Attribute str]
                                                     -> Bool)
@@ -65,7 +65,7 @@ newtype Selector = MkSelector [(SelectNode, SelectSettings)]
 -- satisfied in addition to the SelectNode. This includes criteria that are
 -- dependent on the context of the current node, for example the depth in
 -- relation to the previously matched SelectNode.
-data SelectSettings = SelectSettings {
+newtype SelectSettings = SelectSettings {
   -- | The required depth of the current select node in relation to the
   -- previously matched SelectNode.
   selectSettingsDepth :: Maybe Int

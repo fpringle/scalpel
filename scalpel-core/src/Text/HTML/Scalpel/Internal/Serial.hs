@@ -1,9 +1,9 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE StandaloneDeriving #-}
+
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
+
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE CPP #-}
 {-# OPTIONS_HADDOCK hide #-}
@@ -31,14 +31,12 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
 import Control.Monad.Writer (MonadWriter)
-import Control.Monad.Fix
 import Data.Bifunctor
 import Data.Functor.Identity
 import Data.List.PointedList (PointedList)
 import Data.Maybe
 import Prelude hiding (until)
 
-import qualified Control.Monad.Fail as Fail
 import qualified Data.List.PointedList as PointedList
 import qualified Data.Tree as Tree
 import qualified Text.StringLike as TagSoup
@@ -116,18 +114,11 @@ type SerialScraper str a = SerialScraperT str Identity a
 -- | Run a serial scraper transforming over a monad 'm'.
 newtype SerialScraperT str m a =
     MkSerialScraper (StateT (SpecZipper str) (MaybeT m) a)
-    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadFix,
+    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadFix, MonadFail,
               MonadIO, MonadCont, MonadError e, MonadReader r, MonadWriter w)
 
-#if MIN_VERSION_base(4,9,0)
-deriving instance Monad m => Fail.MonadFail (SerialScraperT str m)
-#else
-instance Fail.MonadFail m => Fail.MonadFail (SerialScraperT str m) where
-  fail = lift . Fail.fail
-#endif
-
 instance MonadTrans (SerialScraperT str) where
-  lift op = MkSerialScraper . lift . lift $ op
+  lift = MkSerialScraper . lift . lift
 
 instance MonadState s m => MonadState s (SerialScraperT str m) where
   get = MkSerialScraper (lift . lift $ get)
@@ -137,7 +128,7 @@ instance MonadState s m => MonadState s (SerialScraperT str m) where
 -- children of the currently focused node are visited serially.
 inSerial :: (TagSoup.StringLike str, Monad m)
     => SerialScraperT str m a -> ScraperT str m a
-inSerial (MkSerialScraper serialScraper) = MkScraper $ ReaderT $ scraper
+inSerial (MkSerialScraper serialScraper) = MkScraper $ ReaderT scraper
   where
     scraper spec@(vec, root : _, ctx)
       | ctxInChroot ctx = evalStateT serialScraper
@@ -223,7 +214,7 @@ untilWith moveList appendNode (MkScraper (ReaderT until)) (MkSerialScraper scrap
            spec <- maybeT $ PointedList._focus zipper'
            do until spec
               return (PointedList.singleton Nothing, zipper)
-            <|> (first (appendNode (Just spec)) `liftM` split zipper')
+            <|> (first (appendNode (Just spec)) `fmap` split zipper')
          <|> return (PointedList.singleton Nothing, zipper)
 
 -- | Create a new serial context by moving the focus backward and collecting
